@@ -23,6 +23,8 @@ url_count = (set()
              set([line.strip() for line in open("successful_urls.txt").readlines() if line.strip() != ""]))
 MAX_LINKS_TO_DOWNLOAD = 3000
 
+PageWithMostOutLinks = None
+
 
 @Producer(ProducedLink, Link)
 @GetterSetter(OneUnProcessedGroup)
@@ -102,11 +104,22 @@ def extract_next_links(rawDatas):
     for p in rawDatas:
         assert isinstance(p, UrlResponse)
         if not p.bad_url:
-            html_string = lxml.html.fromstring(p.content)
-            html_string.make_links_absolute(p.url)
-            for element, attribute, link, position in lxml.html.iterlinks(html_string):
-                print link
-                outputLinks.append(link)
+            if not p.is_redirected:
+                if p.content is not None:
+                    html_string = lxml.html.fromstring(p.content)
+                    html_string.make_links_absolute(p.url)
+                    for element, attribute, link, position in lxml.html.iterlinks(html_string):
+                        print link
+                        outputLinks.append(link)
+                        p.out_links.add(link)
+                    if PageWithMostOutLinks is not None:
+                        if len(p.out_links) > len(PageWithMostOutLinks.out_links):
+                            global PageWithMostOutLinks
+                            PageWithMostOutLinks = p
+                    else:
+                        global PageWithMostOutLinks
+                        PageWithMostOutLinks = p
+    print "------------------------------------------"
     return outputLinks
 
 
