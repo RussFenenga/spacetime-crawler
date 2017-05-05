@@ -104,21 +104,24 @@ def extract_next_links(rawDatas):
     for p in rawDatas:
         assert isinstance(p, UrlResponse)
         if not p.bad_url:
-            if not p.is_redirected:
-                if p.content is not None:
-                    html_string = lxml.html.fromstring(p.content)
+            if p.content is not None:
+                html_string = lxml.html.fromstring(p.content)
+                if not p.is_redirected:
                     html_string.make_links_absolute(p.url)
-                    for element, attribute, link, position in lxml.html.iterlinks(html_string):
-                        print link
-                        outputLinks.append(link)
-                        p.out_links.add(link)
-                    if PageWithMostOutLinks is not None:
-                        if len(p.out_links) > len(PageWithMostOutLinks.out_links):
-                            global PageWithMostOutLinks
-                            PageWithMostOutLinks = p
-                    else:
+                else:
+                    html_string.make_links_absolute(p.final_url)
+                    
+                for element, attribute, link, position in lxml.html.iterlinks(html_string):
+                    print link
+                    outputLinks.append(link)
+                    p.out_links.add(link)
+                if PageWithMostOutLinks is not None:
+                    if len(p.out_links) > len(PageWithMostOutLinks.out_links):
                         global PageWithMostOutLinks
                         PageWithMostOutLinks = p
+                else:
+                    global PageWithMostOutLinks
+                    PageWithMostOutLinks = p
     print "------------------------------------------"
     return outputLinks
 
