@@ -33,8 +33,10 @@ MAX_LINKS_TO_DOWNLOAD = 3000
 class CrawlerFrame(IApplication):
     def __init__(self, frame):
         self.starttime = time()
+        
         # Set app_id <student_id1>_<student_id2>...
         self.app_id = "70116153_58042643_57615347"
+        
         # Set user agent string to IR W17 UnderGrad <student_id1>, <student_id2> ...
         # If Graduate studetn, change the UnderGrad part to Grad.
         self.UserAgentString = "IR S17 UnderGrad 70116153, 58042643, 57615347"
@@ -67,7 +69,7 @@ class CrawlerFrame(IApplication):
             self.done = True
 
     def shutdown(self):
-        analytics()
+        analytics() ## Record analytics of the crawler to analytics.txt
         print "downloaded ", len(url_count), " in ", time() - self.starttime, " seconds."
         pass
 
@@ -87,30 +89,30 @@ def process_url_group(group, useragentstr):
 
 
 ## A | N | A | L | Y | T | I | C | S #######################################################
-PageWithMostOutLinks = None
 invalid_links = 0
+PageWithMostOutLinks = None
 subdomains = defaultdict(int)
 
 def readPrevAnalytics():
-    if exists("analytics.txt"):
-        file = open("analytics.txt", "r")
-    else: 
+    
+    if not exists("analytics.txt"):
         return
+
+    file = open("analytics.txt", "r")
 
     global subdomains
     global PageWithMostOutLinks
     global invalid_links
     for line in file.readlines():
-        line = line.split(":")
+        line = line.split(" ")
         
-        if line[0] == "Subdomains:":
+        if line[0] == "Subdomain":
             subdomains[line[1]] += int(line[2])
-
-        if line[0] == "Page With Most Outlinks":
-            PageWithMostOutLinks = dict()
-            PageWithMostOutLinks[line[1]] = int(line[2])
-
-        if line[0] == "Invalid Links":
+        
+        elif line[0] == "Page":
+            PageWithMostOutLinks = (line[1], int(line[2]))
+        
+        elif line[0] == "Invalidlinks":
             invalid_links += int(line[1])
 
     file.close()
@@ -119,18 +121,21 @@ def analytics():
     file = open("analytics.txt", "w")
     
     global subdomains
+    file.write("S | U | B | D | O | M | A | I | N | S \n")
     for name, visits in subdomains.items():
-        file.write( "Subdomain:" + name + ":" + str(visits) + "\n")
+        file.write( "Subdomain " + name + " " + str(visits) + "\n")
 
     global PageWithMostOutLinks
+    file.write("\nM | O | S | T |  | O | U | T | L | I | N | K | S \n")
     if PageWithMostOutLinks is not None:
-        file.write("Page With Most Outlinks:"  + PageWithMostOutLinks.items()[0] \
-            + ":" + PageWithMostOutLinks.items()[1] +"\n")
+        file.write("Page "  + PageWithMostOutLinks[0] \
+            + " " + str(PageWithMostOutLinks[1]) +"\n")
     else:
         file.write("No page with most out Links\n")
 
     global invalid_links
-    file.write("Invalid Links: " + str(invalid_links) + "\n")
+    file.write("\nI | N | V | A | L | I | D |  | L | I | N | K | S \n")
+    file.write("Invalidlinks " + str(invalid_links) + "\n")
 
     file.close()
 
@@ -164,8 +169,6 @@ def extract_next_links(rawDatas):
                     html_string.make_links_absolute(raw_content.url)
                 else:
                     html_string.make_links_absolute(raw_content.final_url)
-                
-                analytics.write(raw_content.url + "\n")
 
                 for element, attribute, link, position in lxml.html.iterlinks(html_string):
                     print link
@@ -174,12 +177,10 @@ def extract_next_links(rawDatas):
                     
                 global PageWithMostOutLinks
                 if PageWithMostOutLinks is not None:
-                    if len(raw_content.out_links) > len(PageWithMostOutLinks.out_links):
-                        PageWithMostOutLinks = dict()
-                        PageWithMostOutLinks[raw_content.url] = len(raw_content.out_links)
+                    if len(raw_content.out_links) > PageWithMostOutLinks[1]:
+                        PageWithMostOutLinks = (raw_content.url, len(raw_content.out_links))
                 else:
-                    PageWithMostOutLinks = dict()
-                    PageWithMostOutLinks[raw_content.url] = len(raw_content.out_links)
+                    PageWithMostOutLinks = (raw_content.url, len(raw_content.out_links))
             
             except:
                 ## if url parsing the url fails, mark it as a bad url 
@@ -191,16 +192,18 @@ def extract_next_links(rawDatas):
 
 def _validPath(parsedUrlPath):
     ''' Checks to see if there are duplicate directories in the path. '''
+    
     pathDirectories = parsedUrlPath[1:].split("/")
 
-    if "//" in parsedUrlPath:
+    # Depth Checking, path components of at most 10 will be considered valid
+    if len(pathDirectories) > 10:
         return False
     
     for directory in pathDirectories[:-1]:
         if "." in directory:
             return False
 
-    return len(pathDirectories) == len(set(pathDirectories))
+    return (len(pathDirectories) == len(set(pathDirectories)))
 
 
 def _noQuery(parsedUrlQuery, parsedUrlFrags):
@@ -218,20 +221,19 @@ def is_valid(url):
     global invalid_links
     #badLinks = open("badlinks.txt", "a")
     parsed = urlparse(url)
-    if parsed.scheme not in set(["http", "https"]):
-        #badLinks.write(url + "\n")
-        #badLinks.close()
-        return False
+    
     try: 
-        validity = ".ics.uci.edu" in parsed.hostname \
-                and _validPath(parsed.path) \
-                and _noQuery(parsed.query, parsed.fragment) \
-                and not re.match(".*\.(css|js|bmp|gif|jpe?g|ico" \
-                                + "|png|tiff?|mid|mp2|mp3|mp4" \
-                                + "|wav|avi|mov|mpeg|ram|m4v|mkv|ogg|ogv|pdf" \
-                                + "|ps|eps|tex|ppt|pptx|doc|docx|xls|xlsx|names|data|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso|epub|dll|cnf|tgz|sha1" \
-                                + "|thmx|mso|arff|rtf|jar|csv" \
-                                + "|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower())
+        validity = parsed.scheme in set(["http", "https"]) \
+                    and ".ics.uci.edu" in parsed.hostname \
+                    and _validPath(parsed.path) \
+                    and _noQuery(parsed.query, parsed.fragment) \
+                    and not re.match(".*\.(css|js|bmp|gif|jpe?g|ico" \
+                                    + "|png|tiff?|mid|mp2|mp3|mp4" \
+                                    + "|wav|avi|mov|mpeg|ram|m4v|mkv|ogg|ogv|pdf" \
+                                    + "|ps|eps|tex|ppt|pptx|doc|docx|xls|xlsx|names|data" \
+                                    + "|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso|epub|dll|cnf|tgz|sha1" \
+                                    + "|thmx|mso|arff|rtf|jar|csv" \
+                                    + "|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower())
 
         print url + "\n"
         if validity == False:
@@ -239,6 +241,7 @@ def is_valid(url):
             #badLinks.write(url + "\n")
             #badLinks.close()
         else:
+            # Increment the number of times the subdomain is visited
             global subdomains
             subdomain = parsed.hostname.split('.')[0]
             subdomains[subdomain] += 1
