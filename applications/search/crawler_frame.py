@@ -1,12 +1,15 @@
 import logging
 
 import lxml
+from collections import defaultdict
 
 from datamodel.search.datamodel import ProducedLink, OneUnProcessedGroup, robot_manager, Link, UrlResponse
 from spacetime.client.IApplication import IApplication
 from spacetime.client.declarations import Producer, GetterSetter, Getter
 from lxml import etree,html
 import re, os
+
+from os.path import exists
 from time import time
 
 try:
@@ -23,7 +26,6 @@ url_count = (set()
              set([line.strip() for line in open("successful_urls.txt").readlines() if line.strip() != ""]))
 MAX_LINKS_TO_DOWNLOAD = 3000
 
-PageWithMostOutLinks = None
 
 
 @Producer(ProducedLink, Link)
@@ -32,10 +34,10 @@ class CrawlerFrame(IApplication):
     def __init__(self, frame):
         self.starttime = time()
         # Set app_id <student_id1>_<student_id2>...
-        self.app_id = "70116153_0000000_0000000"
+        self.app_id = "70116153_58042643_57615347"
         # Set user agent string to IR W17 UnderGrad <student_id1>, <student_id2> ...
         # If Graduate studetn, change the UnderGrad part to Grad.
-        self.UserAgentString = "IR S17 UnderGrad 70116153"
+        self.UserAgentString = "IR S17 UnderGrad 70116153, 58042643, 57615347"
 
         self.frame = frame
         assert (self.UserAgentString != None)
@@ -48,6 +50,7 @@ class CrawlerFrame(IApplication):
         l = ProducedLink("http://www.ics.uci.edu", self.UserAgentString)
         print l.full_url
         self.frame.add(l)
+        readPrevAnalytics()
 
     def update(self):
         for g in self.frame.get_new(OneUnProcessedGroup):
@@ -64,9 +67,9 @@ class CrawlerFrame(IApplication):
             self.done = True
 
     def shutdown(self):
+        analytics()
         print "downloaded ", len(url_count), " in ", time() - self.starttime, " seconds."
         pass
-
 
 def save_count(urls):
     global url_count
@@ -83,14 +86,61 @@ def process_url_group(group, useragentstr):
     return extract_next_links(rawDatas), rawDatas
 
 
+## A | N | A | L | Y | T | I | C | S #######################################################
+PageWithMostOutLinks = None
+invalid_links = 0
+subdomains = defaultdict(int)
+
+def readPrevAnalytics():
+    if exists("analytics.txt"):
+        file = open("analytics.txt", "r")
+    else: 
+        return
+
+    global subdomains
+    global PageWithMostOutLinks
+    global invalid_links
+    for line in file.readlines():
+        line = line.split(":")
+        
+        if line[0] == "Subdomains:":
+            subdomains[line[1]] += int(line[2])
+
+        if line[0] == "Page With Most Outlinks":
+            PageWithMostOutLinks = dict()
+            PageWithMostOutLinks[line[1]] = int(line[2])
+
+        if line[0] == "Invalid Links":
+            invalid_links += int(line[1])
+
+    file.close()
+
+def analytics():
+    file = open("analytics.txt", "w")
+    
+    global subdomains
+    for name, visits in subdomains.items():
+        file.write( "Subdomain:" + name + ":" + str(visits) + "\n")
+
+    global PageWithMostOutLinks
+    if PageWithMostOutLinks is not None:
+        file.write("Page With Most Outlinks:"  + PageWithMostOutLinks.items()[0] \
+            + ":" + PageWithMostOutLinks.items()[1] +"\n")
+    else:
+        file.write("No page with most out Links\n")
+
+    global invalid_links
+    file.write("Invalid Links: " + str(invalid_links) + "\n")
+
+    file.close()
+
+
 #######################################################################################
 '''
 STUB FUNCTIONS TO BE FILLED OUT BY THE STUDENT.
 '''
 
-
 def extract_next_links(rawDatas):
-    outputLinks = list()
     '''
     rawDatas is a list of objs -> [raw_content_obj1, raw_content_obj2, ....]
     Each obj is of type UrlResponse  declared at L28-42 datamodel/search/datamodel.py
@@ -101,48 +151,104 @@ def extract_next_links(rawDatas):
 
     Suggested library: lxml
     '''
-    for p in rawDatas:
-        assert isinstance(p, UrlResponse)
-        if not p.bad_url:
-            if p.content is not None:
-                html_string = lxml.html.fromstring(p.content)
-                if not p.is_redirected:
-                    html_string.make_links_absolute(p.url)
+
+    outputLinks = list()
+
+    for raw_content in rawDatas:
+        assert isinstance(raw_content, UrlResponse)
+        if not raw_content.bad_url and raw_content.content is not None:
+            try: 
+                html_string = lxml.html.fromstring(raw_content.content)
+
+                if not raw_content.is_redirected:
+                    html_string.make_links_absolute(raw_content.url)
                 else:
-                    html_string.make_links_absolute(p.final_url)
-                    
+                    html_string.make_links_absolute(raw_content.final_url)
+                
+                analytics.write(raw_content.url + "\n")
+
                 for element, attribute, link, position in lxml.html.iterlinks(html_string):
                     print link
                     outputLinks.append(link)
-                    p.out_links.add(link)
+                    raw_content.out_links.add(link)
+                    
+                global PageWithMostOutLinks
                 if PageWithMostOutLinks is not None:
-                    if len(p.out_links) > len(PageWithMostOutLinks.out_links):
-                        global PageWithMostOutLinks
-                        PageWithMostOutLinks = p
+                    if len(raw_content.out_links) > len(PageWithMostOutLinks.out_links):
+                        PageWithMostOutLinks = dict()
+                        PageWithMostOutLinks[raw_content.url] = len(raw_content.out_links)
                 else:
-                    global PageWithMostOutLinks
-                    PageWithMostOutLinks = p
+                    PageWithMostOutLinks = dict()
+                    PageWithMostOutLinks[raw_content.url] = len(raw_content.out_links)
+            
+            except:
+                ## if url parsing the url fails, mark it as a bad url 
+                raw_content.bad_url = True
+
+    
     print "------------------------------------------"
     return outputLinks
 
+def _validPath(parsedUrlPath):
+    ''' Checks to see if there are duplicate directories in the path. '''
+    pathDirectories = parsedUrlPath[1:].split("/")
+
+    if "//" in parsedUrlPath:
+        return False
+    
+    for directory in pathDirectories[:-1]:
+        if "." in directory:
+            return False
+
+    return len(pathDirectories) == len(set(pathDirectories))
+
+
+def _noQuery(parsedUrlQuery, parsedUrlFrags):
+    ## To avoid being trapped
+    return len(parsedUrlQuery) == 0 and len(parsedUrlFrags) == 0
 
 def is_valid(url):
     '''
     Function returns True or False based on whether the url has to be downloaded or not.
     Robot rules and duplication rules are checked separately.
-
+    
     This is a great place to filter out crawler traps.
     '''
+
+    global invalid_links
+    #badLinks = open("badlinks.txt", "a")
     parsed = urlparse(url)
     if parsed.scheme not in set(["http", "https"]):
+        #badLinks.write(url + "\n")
+        #badLinks.close()
         return False
-    try:
-        return ".ics.uci.edu" in parsed.hostname \
-               and not re.match(".*\.(css|js|bmp|gif|jpe?g|ico" + "|png|tiff?|mid|mp2|mp3|mp4" \
+    try: 
+        validity = ".ics.uci.edu" in parsed.hostname \
+                and _validPath(parsed.path) \
+                and _noQuery(parsed.query, parsed.fragment) \
+                and not re.match(".*\.(css|js|bmp|gif|jpe?g|ico" \
+                                + "|png|tiff?|mid|mp2|mp3|mp4" \
                                 + "|wav|avi|mov|mpeg|ram|m4v|mkv|ogg|ogv|pdf" \
                                 + "|ps|eps|tex|ppt|pptx|doc|docx|xls|xlsx|names|data|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso|epub|dll|cnf|tgz|sha1" \
                                 + "|thmx|mso|arff|rtf|jar|csv" \
                                 + "|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower())
 
+        print url + "\n"
+        if validity == False:
+            invalid_links += 1
+            #badLinks.write(url + "\n")
+            #badLinks.close()
+        else:
+            global subdomains
+            subdomain = parsed.hostname.split('.')[0]
+            subdomains[subdomain] += 1
+
+        #badLinks.close()
+        return validity
+
     except TypeError:
         print ("TypeError for ", parsed)
+        invalid_links += 1
+        #badLinks.write(url + "\n")
+        #badLinks.close()
+        return False
